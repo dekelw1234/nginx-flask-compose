@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start the stack and wait until healthy
+        run: docker compose up -d --wait --wait-timeout 120
+
+      - name: Validate nginx config
+        run: docker compose exec -T web nginx -t
+
+      - name: "Smoke test: /health returns 200"
+        run: curl -fsS http://localhost:8080/health
+
+      - name: "Smoke test: home page returns 200"
+        run: curl -fsS -o /dev/null http://localhost:8080/
+
+      - name: "Smoke test: unknown page returns 404"
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8080/does-not-exist)
+          echo "Got HTTP $code"
+          test "$code" = "404"
+
+      - name: "Smoke test: API goes through nginx to the backend"
+        run: |
+          curl -fsS http://localhost:8080/api/hello | tee response.json
+          grep -q "Hello from the backend" response.json
+
+      - name: Show logs if something failed
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down
